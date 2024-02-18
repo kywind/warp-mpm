@@ -14,7 +14,7 @@ def run_sim_process(pid):
     batch_size = 10
 
     print("PID:", pid, "started")
-    mpm_solver = MPM_Simulator_WARP(n_particles=10, batch_size=batch_size)
+    mpm_solver = MPM_Simulator_WARP(n_particles=10, batch_size=batch_size, dx=0.01, device=dvc)
     print("PID:", pid, "initialized")
 
     # You can either load sampling data from an external h5 file, containing initial position (n,3) and particle_volume (n,)
@@ -25,7 +25,7 @@ def run_sim_process(pid):
     volume_tensor = torch.ones((batch_size, mpm_solver.n_particles)) * 2.5e-8  # (bsz, n)
     position_tensor = mpm_solver.export_particle_x_to_torch()  # (bsz, n, 3)
 
-    mpm_solver.load_initial_data_from_torch(position_tensor, volume_tensor, batch_size=batch_size)
+    mpm_solver.load_initial_data_from_torch(position_tensor, volume_tensor, batch_size=batch_size, dx=0.01, device=dvc)
 
     # Note: You must provide 'density=..' to set particle_mass = density * particle_volume
 

@@ -13,19 +13,23 @@ wp.config.verify_cuda = True
 
 dvc = "cuda:0"
 
-batch_size = 100
+batch_size = 2
+dx = 0.02
 
-mpm_solver = MPM_Simulator_WARP(n_particles=10, batch_size=batch_size)
+# first initialization
+mpm_solver = MPM_Simulator_WARP(n_particles=10, batch_size=batch_size, dx=dx, device=dvc)
 
+# second initialization
 # You can either load sampling data from an external h5 file, containing initial position (n,3) and particle_volume (n,)
-mpm_solver.load_from_sampling("sim_data/sand_column.h5", batch_size=batch_size, dx=0.01, device=dvc) 
+mpm_solver.load_from_sampling("sim_data/sand_column.h5", batch_size=batch_size, dx=dx, device=dvc, fps=2000)
 
 # Or load from torch tensor (also position and volume)
 # Here we borrow the data from h5, but you can use your own
 volume_tensor = torch.ones((batch_size, mpm_solver.n_particles)) * 2.5e-8  # (bsz, n)
 position_tensor = mpm_solver.export_particle_x_to_torch()  # (bsz, n, 3)
 
-mpm_solver.load_initial_data_from_torch(position_tensor, volume_tensor, batch_size=batch_size)
+# third initialization
+mpm_solver.load_initial_data_from_torch(position_tensor, volume_tensor, batch_size=batch_size, dx=dx, device=dvc)
 
 # Note: You must provide 'density=..' to set particle_mass = density * particle_volume
 

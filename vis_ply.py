@@ -1,7 +1,7 @@
 import open3d as o3d
 from time import sleep
 
-frames = 1000
+frames = 500
 
 vis = o3d.visualization.Visualizer()
 vis.create_window()

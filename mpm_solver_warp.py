@@ -142,7 +142,7 @@ class MPM_Simulator_WARP:
 
 
     # the h5 file should store particle initial position and volume.
-    def load_from_sampling(self, sampling_h5, batch_size=2, dx=0.01, grid_lim=[1.0, 1.0, 1.0], device="cuda:0"):
+    def load_from_sampling(self, sampling_h5, batch_size=2, dx=0.01, grid_lim=[1.0, 1.0, 1.0], fps=-1, device="cuda:0"):
         if not os.path.exists(sampling_h5):
             print("h5 file cannot be found at ", os.getcwd() + sampling_h5)
             exit()
@@ -152,12 +152,20 @@ class MPM_Simulator_WARP:
 
         x = x[()].transpose()  # np vector of x # shape now is (n_particles, dim)
 
+        print("Sampling particles are loaded from h5 file. Simulator is re-initialized for the correct n_particles")
+        particle_volume = np.squeeze(particle_volume, 0)
+
+        if fps > 0:
+            from dgl.geometry import farthest_point_sampler
+            particle_tensor = torch.from_numpy(x).float()[None, ...]
+            fps_idx_tensor = farthest_point_sampler(particle_tensor, fps, start_idx=np.random.randint(0, x.shape[0]))[0]
+            fps_idx = fps_idx_tensor.numpy().astype(np.int32)
+            x = x[fps_idx]
+            particle_volume = particle_volume[fps_idx]
+
         self.dim, self.n_particles = x.shape[1], x.shape[0]
 
         self.initialize(self.n_particles, batch_size, dx, grid_lim, device=device)
-
-        print("Sampling particles are loaded from h5 file. Simulator is re-initialized for the correct n_particles")
-        particle_volume = np.squeeze(particle_volume, 0)
 
         x = np.array(x, dtype=float)[None].repeat(batch_size, axis=0)
         particle_volume = np.array(particle_volume, dtype=float)[None].repeat(batch_size, axis=0)
