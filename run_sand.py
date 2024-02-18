@@ -5,6 +5,8 @@ from engine_utils import *
 import torch
 import time
 
+t1 = time.time()
+
 wp.init()
 wp.config.verify_cuda = True
 
@@ -52,6 +54,9 @@ for k in range(1, 500):
     # save_data_at_frame(mpm_solver, directory_to_save, k, save_to_ply=True, save_to_h5=False)
 time2 = time.time()
 print("Time for 500 iterations: ", time2-time1)
+
+t2 = time.time()
+print("Total time: ", t2-t1)
 
 
 # extract the position, make some changes, load it back
