@@ -3,5 +3,5 @@
 __pycache__
 *.pyc
 
-sim_data/
-sim_results/
+sim_data*/
+sim_results*/

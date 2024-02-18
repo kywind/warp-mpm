@@ -4,6 +4,7 @@ import os
 import sys
 import warp as wp
 import torch
+import copy
 
 def save_data_at_frame(mpm_solver, dir_name, frame, save_to_ply = True, save_to_h5 = False):
     os.umask(0)
@@ -19,19 +20,19 @@ def save_data_at_frame(mpm_solver, dir_name, frame, save_to_ply = True, save_to_
         if os.path.exists(fullfilename): os.remove(fullfilename)
         newFile = h5py.File(fullfilename, "w")
 
-        x_np = mpm_solver.mpm_state.particle_x.numpy().transpose() # x_np has shape (3, n_particles)
+        x_np = mpm_solver.mpm_state.particle_x.numpy()[0].transpose() # x_np has shape (3, n_particles)
         newFile.create_dataset("x", data=x_np) # position
 
         currentTime = np.array([mpm_solver.time]).reshape(1,1)
         newFile.create_dataset("time", data=currentTime) # current time
 
-        f_tensor_np = mpm_solver.mpm_state.particle_F.numpy().reshape(-1,9).transpose() # shape = (9, n_particles)
+        f_tensor_np = mpm_solver.mpm_state.particle_F.numpy()[0].reshape(-1,9).transpose() # shape = (9, n_particles)
         newFile.create_dataset("f_tensor", data=f_tensor_np) # deformation grad
 
-        v_np = mpm_solver.mpm_state.particle_v.numpy().transpose() # v_np has shape (3, n_particles)
+        v_np = mpm_solver.mpm_state.particle_v.numpy()[0].transpose() # v_np has shape (3, n_particles)
         newFile.create_dataset("v", data=v_np) # particle velocity
 
-        C_np = mpm_solver.mpm_state.particle_C.numpy().reshape(-1,9).transpose() # shape = (9, n_particles)
+        C_np = mpm_solver.mpm_state.particle_C.numpy()[0].reshape(-1,9).transpose() # shape = (9, n_particles)
         newFile.create_dataset("C", data=C_np) # particle C
         print("save siumlation data at frame ", frame, " to ", fullfilename)
 
@@ -40,7 +41,12 @@ def particle_position_to_ply(mpm_solver, filename):
     if os.path.exists(filename):
         os.remove(filename)
     position = mpm_solver.mpm_state.particle_x.numpy()
-    num_particles = (position).shape[0]
+    num_particles = position.shape[0] * position.shape[1]
+    bsz = position.shape[0]
+    offset = np.arange(bsz)[:, None, None] * 1.0
+    offset = np.concatenate([offset, np.zeros_like(offset), np.zeros_like(offset)], axis=-1)
+    position = position + offset
+    position = position.reshape(-1, 3)
     position = position.astype(np.float32)
     with open(filename, 'wb') as f: # write binary
         header = f"""ply

@@ -9,18 +9,19 @@ wp.config.verify_cuda = True
 
 dvc = "cuda:0"
 
-mpm_solver = MPM_Simulator_WARP(10) # initialize with whatever number is fine. it will be reintialized
+batch_size = 2
 
+mpm_solver = MPM_Simulator_WARP(n_particles=10, batch_size=batch_size)
 
 # You can either load sampling data from an external h5 file, containing initial position (n,3) and particle_volume (n,)
-mpm_solver.load_from_sampling("sim_data/sand_column.h5", n_grid = 150, device=dvc) 
+mpm_solver.load_from_sampling("sim_data/sand_column.h5", batch_size=batch_size, dx=0.01, device=dvc) 
 
 # Or load from torch tensor (also position and volume)
 # Here we borrow the data from h5, but you can use your own
-volume_tensor = torch.ones(mpm_solver.n_particles) * 2.5e-8
-position_tensor = mpm_solver.export_particle_x_to_torch()
+volume_tensor = torch.ones((batch_size, mpm_solver.n_particles)) * 2.5e-8  # (bsz, n)
+position_tensor = mpm_solver.export_particle_x_to_torch()  # (bsz, n, 3)
 
-mpm_solver.load_initial_data_from_torch(position_tensor, volume_tensor)
+mpm_solver.load_initial_data_from_torch(position_tensor, volume_tensor, batch_size=batch_size)
 
 # Note: You must provide 'density=..' to set particle_mass = density * particle_volume
 
@@ -43,10 +44,9 @@ directory_to_save = './sim_results'
 
 save_data_at_frame(mpm_solver, directory_to_save, 0, save_to_ply=True, save_to_h5=False)
 
-for k in range(1,50):
+for k in range(1, 50):
     mpm_solver.p2g2p(k, 0.002, device=dvc)
     save_data_at_frame(mpm_solver, directory_to_save, k, save_to_ply=True, save_to_h5=False)
-
 
 
 # extract the position, make some changes, load it back
@@ -55,7 +55,7 @@ position = mpm_solver.export_particle_x_to_torch()
 position[:,0] = position[:,0] + 0.1
 mpm_solver.import_particle_x_from_torch(position)
 # keep running sim
-for k in range(50,1000):
+for k in range(50, 1000):
  
     mpm_solver.p2g2p(k, 0.002, device=dvc)
     save_data_at_frame(mpm_solver, directory_to_save, k, save_to_ply=True, save_to_h5=False)

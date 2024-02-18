@@ -6,22 +6,26 @@ import torch
 @wp.struct
 class MPMModelStruct:
     ####### essential #######
-    grid_lim: float
+    batch_size: int
+
+    grid_lim_x: float
+    grid_lim_y: float
+    grid_lim_z: float
+    n_grid_x: int
+    n_grid_y: int
+    n_grid_z: int
+
     n_particles: int
-    n_grid: int
     dx: float
     inv_dx: float
-    grid_dim_x: int
-    grid_dim_y: int
-    grid_dim_z: int
-    mu: wp.array(dtype=float)
-    lam: wp.array(dtype=float)
-    E: wp.array(dtype=float)
-    nu: wp.array(dtype=float)
+    mu: wp.array(dtype=float, ndim=2)  # type: ignore
+    lam: wp.array(dtype=float, ndim=2)  # type: ignore
+    E: wp.array(dtype=float, ndim=2)  # type: ignore
+    nu: wp.array(dtype=float, ndim=2)  # type: ignore
     material: int
 
     ######## for plasticity ####
-    yield_stress: wp.array(dtype=float)
+    yield_stress: wp.array(dtype=float, ndim=2)  # type: ignore
     friction_angle: float
     alpha: float
     gravitational_accelaration: wp.vec3
@@ -42,30 +46,26 @@ class MPMModelStruct:
 class MPMStateStruct:
     ###### essential #####
     # particle
-    particle_x: wp.array(dtype=wp.vec3)  # current position
-    particle_v: wp.array(dtype=wp.vec3)  # particle velocity
-    particle_F: wp.array(dtype=wp.mat33)  # particle elastic deformation gradient
-    particle_init_cov: wp.array(dtype=float)  # initial covariance matrix
-    particle_cov: wp.array(dtype=float)  # current covariance matrix
-    particle_F_trial: wp.array(
-        dtype=wp.mat33
-    )  # apply return mapping on this to obtain elastic def grad
-    particle_R: wp.array(dtype=wp.mat33)  # rotation matrix
-    particle_stress: wp.array(dtype=wp.mat33)  # Kirchoff stress, elastic stress
-    particle_C: wp.array(dtype=wp.mat33)
-    particle_vol: wp.array(dtype=float)  # current volume
-    particle_mass: wp.array(dtype=float)  # mass
-    particle_density: wp.array(dtype=float)  # density
-    particle_Jp: wp.array(dtype=float)
+    particle_x: wp.array(dtype=wp.vec3, ndim=2)  # type: ignore # current position
+    particle_v: wp.array(dtype=wp.vec3, ndim=2)  # type: ignore # particle velocity
+    particle_F: wp.array(dtype=wp.mat33, ndim=2)  # type: ignore # particle elastic deformation gradient
+    particle_init_cov: wp.array(dtype=float, ndim=2)  # type: ignore # initial covariance matrix
+    particle_cov: wp.array(dtype=float, ndim=2)  # type: ignore # current covariance matrix
+    particle_F_trial: wp.array(dtype=wp.mat33, ndim=2)  # type: ignore # apply return mapping on this to obtain elastic def grad
+    particle_R: wp.array(dtype=wp.mat33, ndim=2)  # type: ignore # rotation matrix
+    particle_stress: wp.array(dtype=wp.mat33, ndim=2)  # type: ignore # Kirchoff stress, elastic stress
+    particle_C: wp.array(dtype=wp.mat33, ndim=2)  # type: ignore 
+    particle_vol: wp.array(dtype=float, ndim=2)  # type: ignore # current volume
+    particle_mass: wp.array(dtype=float, ndim=2)  # type: ignore # mass
+    particle_density: wp.array(dtype=float, ndim=2)  # type: ignore # density
+    particle_Jp: wp.array(dtype=float, ndim=2)  # type: ignore 
 
-    particle_selection: wp.array(dtype=int) # only particle_selection[p] = 0 will be simulated
+    particle_selection: wp.array(dtype=int, ndim=2)  # type: ignore # only particle_selection[p] = 0 will be simulated
 
     # grid
-    grid_m: wp.array(dtype=float, ndim=3)
-    grid_v_in: wp.array(dtype=wp.vec3, ndim=3)  # grid node momentum/velocity
-    grid_v_out: wp.array(
-        dtype=wp.vec3, ndim=3
-    )  # grid node momentum/velocity, after grid update
+    grid_m: wp.array(dtype=float, ndim=4) # type: ignore
+    grid_v_in: wp.array(dtype=wp.vec3, ndim=4)  # type: ignore # grid node momentum/velocity
+    grid_v_out: wp.array(dtype=wp.vec3, ndim=4)  # type: ignore # grid node momentum/velocity, after grid update
 
 
 # for various boundary conditions
@@ -115,9 +115,9 @@ class Impulse_modifier:
     forceTimesDt: wp.vec3
     numsteps: int
 
-    point: wp.vec3
+    # point: wp.vec3
     size: wp.vec3
-    mask: wp.array(dtype=int)
+    mask: wp.array(dtype=int, ndim=2)  # type: ignore
 
 
 @wp.struct
@@ -172,61 +172,60 @@ class ParticleVelocityModifier:
 
     velocity: wp.vec3
 
-    mask: wp.array(dtype=int)
-
+    mask: wp.array(dtype=int, ndim=2)  # type: ignore
 
 
 
 @wp.kernel
-def set_vec3_to_zero(target_array: wp.array(dtype=wp.vec3)):
-    tid = wp.tid()
-    target_array[tid] = wp.vec3(0.0, 0.0, 0.0)
+def set_vec3_to_zero(target_array: wp.array(dtype=wp.vec3, ndim=2)):  # type: ignore
+    bid, pid = wp.tid()
+    target_array[bid, pid] = wp.vec3(0.0, 0.0, 0.0)
 
 
 @wp.kernel
-def set_mat33_to_identity(target_array: wp.array(dtype=wp.mat33)):
-    tid = wp.tid()
-    target_array[tid] = wp.mat33(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+def set_mat33_to_identity(target_array: wp.array(dtype=wp.mat33, ndim=2)):  # type: ignore
+    bid, pid = wp.tid()
+    target_array[bid, pid] = wp.mat33(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
 
 
 @wp.kernel
-def add_identity_to_mat33(target_array: wp.array(dtype=wp.mat33)):
-    tid = wp.tid()
-    target_array[tid] = wp.add(
-        target_array[tid], wp.mat33(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+def add_identity_to_mat33(target_array: wp.array(dtype=wp.mat33, ndim=2)):  # type: ignore
+    bid, pid = wp.tid()
+    target_array[bid, pid] = wp.add(
+        target_array[bid, pid], wp.mat33(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
     )
 
 
 @wp.kernel
-def subtract_identity_to_mat33(target_array: wp.array(dtype=wp.mat33)):
-    tid = wp.tid()
-    target_array[tid] = wp.sub(
-        target_array[tid], wp.mat33(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+def subtract_identity_to_mat33(target_array: wp.array(dtype=wp.mat33, ndim=2)):  # type: ignore
+    bid, pid = wp.tid()
+    target_array[bid, pid] = wp.sub(
+        target_array[bid, pid], wp.mat33(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
     )
 
 
 @wp.kernel
 def add_vec3_to_vec3(
-    first_array: wp.array(dtype=wp.vec3), second_array: wp.array(dtype=wp.vec3)
+    first_array: wp.array(dtype=wp.vec3, ndim=2), second_array: wp.array(dtype=wp.vec3, ndim=2)  # type: ignore
 ):
-    tid = wp.tid()
-    first_array[tid] = wp.add(first_array[tid], second_array[tid])
+    bid, pid = wp.tid()
+    first_array[bid, pid] = wp.add(first_array[bid, pid], second_array[bid, pid])
 
 
 @wp.kernel
-def set_value_to_float_array(target_array: wp.array(dtype=float), value: float):
-    tid = wp.tid()
-    target_array[tid] = value
+def set_value_to_float_array(target_array: wp.array(dtype=float, ndim=2), value: float):  # type: ignore
+    bid, pid = wp.tid()
+    target_array[bid, pid] = value
 
 
 @wp.kernel
 def get_float_array_product(
-    arrayA: wp.array(dtype=float),
-    arrayB: wp.array(dtype=float),
-    arrayC: wp.array(dtype=float),
+    arrayA: wp.array(dtype=float, ndim=2),  # type: ignore
+    arrayB: wp.array(dtype=float, ndim=2),  # type: ignore
+    arrayC: wp.array(dtype=float, ndim=2),  # type: ignore
 ):
-    tid = wp.tid()
-    arrayC[tid] = arrayA[tid] * arrayB[tid]
+    bid, pid = wp.tid()
+    arrayC[bid, pid] = arrayA[bid, pid] * arrayB[bid, pid]
 
 
 def torch2warp_quat(t, copy=False, dtype=warp.types.float32, dvc="cuda:0"):
@@ -235,11 +234,11 @@ def torch2warp_quat(t, copy=False, dtype=warp.types.float32, dvc="cuda:0"):
         raise RuntimeError(
             "Error aliasing Torch tensor to Warp array. Torch tensor must be float32 or int32 type"
         )
-    assert t.shape[1] == 4
+    assert t.shape[2] == 4
     a = warp.types.array(
         ptr=t.data_ptr(),
         dtype=wp.quat,
-        shape=t.shape[0],
+        shape=(t.shape[0], t.shape[1]),
         copy=False,
         owner=False,
         requires_grad=t.requires_grad,
@@ -258,7 +257,7 @@ def torch2warp_float(t, copy=False, dtype=warp.types.float32, dvc="cuda:0"):
     a = warp.types.array(
         ptr=t.data_ptr(),
         dtype=warp.types.float32,
-        shape=t.shape[0],
+        shape=(t.shape[0], t.shape[1]),
         copy=False,
         owner=False,
         requires_grad=t.requires_grad,
@@ -274,11 +273,11 @@ def torch2warp_vec3(t, copy=False, dtype=warp.types.float32, dvc="cuda:0"):
         raise RuntimeError(
             "Error aliasing Torch tensor to Warp array. Torch tensor must be float32 or int32 type"
         )
-    assert t.shape[1] == 3
+    assert t.shape[2] == 3
     a = warp.types.array(
         ptr=t.data_ptr(),
         dtype=wp.vec3,
-        shape=t.shape[0],
+        shape=(t.shape[0], t.shape[1]),
         copy=False,
         owner=False,
         requires_grad=t.requires_grad,
@@ -295,11 +294,11 @@ def torch2warp_mat33(t, copy=False, dtype=warp.types.float32, dvc="cuda:0"):
         raise RuntimeError(
             "Error aliasing Torch tensor to Warp array. Torch tensor must be float32 or int32 type"
         )
-    assert t.shape[1] == 3
+    assert t.shape[2] == 3
     a = warp.types.array(
         ptr=t.data_ptr(),
         dtype=wp.mat33,
-        shape=t.shape[0],
+        shape=(t.shape[0], t.shape[1]),
         copy=False,
         owner=False,
         requires_grad=t.requires_grad,

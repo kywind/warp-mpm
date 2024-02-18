@@ -8,33 +8,32 @@ from mpm_utils import *
 
 
 class MPM_Simulator_WARP:
-    def __init__(self, n_particles, n_grid=100, grid_lim=1.0, device="cuda:0"):
-        self.initialize(n_particles, n_grid, grid_lim, device=device)
+
+    def __init__(self, n_particles=10, batch_size=2, dx=0.01, grid_lim=[1.0, 1.0, 1.0], device="cuda:0"):
+        self.initialize(n_particles, batch_size, dx, grid_lim, device=device)
         self.time_profile = {}
 
-    def initialize(self, n_particles, n_grid=100, grid_lim=1.0, device="cuda:0"):
+
+    def initialize(self, n_particles=10, batch_size=2, dx=0.01, grid_lim=[1.0, 1.0, 1.0], device="cuda:0"):
         self.n_particles = n_particles
 
         self.mpm_model = MPMModelStruct()
-        # domain will be [0,grid_lim]*[0,grid_lim]*[0,grid_lim] !!!
-        # domain will be [0,grid_lim]*[0,grid_lim]*[0,grid_lim] !!!
-        # domain will be [0,grid_lim]*[0,grid_lim]*[0,grid_lim] !!!
-        self.mpm_model.grid_lim = grid_lim
-        self.mpm_model.n_grid = n_grid
-        self.mpm_model.grid_dim_x = self.mpm_model.n_grid
-        self.mpm_model.grid_dim_y = self.mpm_model.n_grid
-        self.mpm_model.grid_dim_z = self.mpm_model.n_grid
-        (
-            self.mpm_model.dx,
-            self.mpm_model.inv_dx,
-        ) = self.mpm_model.grid_lim / self.mpm_model.n_grid, float(
-            self.mpm_model.n_grid / self.mpm_model.grid_lim
-        )
+        self.mpm_model.batch_size = batch_size
 
-        self.mpm_model.E = wp.zeros(shape=n_particles, dtype=float, device=device)
-        self.mpm_model.nu = wp.zeros(shape=n_particles, dtype=float, device=device)
-        self.mpm_model.mu = wp.zeros(shape=n_particles, dtype=float, device=device)
-        self.mpm_model.lam = wp.zeros(shape=n_particles, dtype=float, device=device)
+        self.mpm_model.grid_lim_x = grid_lim[0]
+        self.mpm_model.grid_lim_y = grid_lim[1]
+        self.mpm_model.grid_lim_z = grid_lim[2]
+        self.mpm_model.n_grid_x = int(grid_lim[0] / dx)
+        self.mpm_model.n_grid_y = int(grid_lim[1] / dx)
+        self.mpm_model.n_grid_z = int(grid_lim[2] / dx)
+
+        self.mpm_model.dx = float(dx)
+        self.mpm_model.inv_dx = float(1.0 / dx)
+
+        self.mpm_model.E = wp.zeros(shape=(batch_size, n_particles), dtype=float, device=device)
+        self.mpm_model.nu = wp.zeros(shape=(batch_size, n_particles), dtype=float, device=device)
+        self.mpm_model.mu = wp.zeros(shape=(batch_size, n_particles), dtype=float, device=device)
+        self.mpm_model.lam = wp.zeros(shape=(batch_size, n_particles), dtype=float, device=device)
 
         self.mpm_model.update_cov_with_F = False
 
@@ -42,11 +41,12 @@ class MPM_Simulator_WARP:
         # material is used to switch between different elastoplastic models. 0 is jelly
         self.mpm_model.material = 0
 
+        # plasticity parameters
         self.mpm_model.plastic_viscosity = 0.0
         self.mpm_model.softening = 0.1
-        self.mpm_model.yield_stress = wp.zeros(
-            shape=n_particles, dtype=float, device=device
-        )
+        self.mpm_model.yield_stress = wp.zeros(shape=(batch_size, n_particles), dtype=float, device=device)
+
+        # frictional parameters
         self.mpm_model.friction_angle = 25.0
         sin_phi = wp.sin(self.mpm_model.friction_angle / 180.0 * 3.14159265)
         self.mpm_model.alpha = wp.sqrt(2.0 / 3.0) * 2.0 * sin_phi / (3.0 - sin_phi)
@@ -55,74 +55,74 @@ class MPM_Simulator_WARP:
 
         self.mpm_model.rpic_damping = 0.0  # 0.0 if no damping (apic). -1 if pic
 
-        self.mpm_model.grid_v_damping_scale = 1.1  # globally applied
+        self.mpm_model.grid_v_damping_scale = 1.1  # no dampling if > 1.0
 
         self.mpm_state = MPMStateStruct()
 
         self.mpm_state.particle_x = wp.empty(
-            shape=n_particles, dtype=wp.vec3, device=device
+            shape=(batch_size, n_particles), dtype=wp.vec3, device=device
         )  # current position
 
         self.mpm_state.particle_v = wp.zeros(
-            shape=n_particles, dtype=wp.vec3, device=device
+            shape=(batch_size, n_particles), dtype=wp.vec3, device=device
         )  # particle velocity
 
         self.mpm_state.particle_F = wp.zeros(
-            shape=n_particles, dtype=wp.mat33, device=device
+            shape=(batch_size, n_particles), dtype=wp.mat33, device=device
         )  # particle F elastic
 
         self.mpm_state.particle_R = wp.zeros(
-            shape=n_particles, dtype=wp.mat33, device=device
+            shape=(batch_size, n_particles), dtype=wp.mat33, device=device
         )  # particle R rotation
 
         self.mpm_state.particle_init_cov = wp.zeros(
-            shape=n_particles * 6, dtype=float, device=device
+            shape=(batch_size, n_particles * 6), dtype=float, device=device
         )  # initial covariance matrix
 
         self.mpm_state.particle_cov = wp.zeros(
-            shape=n_particles * 6, dtype=float, device=device
+            shape=(batch_size, n_particles * 6), dtype=float, device=device
         )  # current covariance matrix
 
         self.mpm_state.particle_F_trial = wp.zeros(
-            shape=n_particles, dtype=wp.mat33, device=device
+            shape=(batch_size, n_particles), dtype=wp.mat33, device=device
         )  # apply return mapping will yield
 
         self.mpm_state.particle_stress = wp.zeros(
-            shape=n_particles, dtype=wp.mat33, device=device
+            shape=(batch_size, n_particles), dtype=wp.mat33, device=device
         )
 
         self.mpm_state.particle_vol = wp.zeros(
-            shape=n_particles, dtype=float, device=device
+            shape=(batch_size, n_particles), dtype=float, device=device
         )  # particle volume
         self.mpm_state.particle_mass = wp.zeros(
-            shape=n_particles, dtype=float, device=device
+            shape=(batch_size, n_particles), dtype=float, device=device
         )  # particle mass
         self.mpm_state.particle_density = wp.zeros(
-            shape=n_particles, dtype=float, device=device
+            shape=(batch_size, n_particles), dtype=float, device=device
         )
         self.mpm_state.particle_C = wp.zeros(
-            shape=n_particles, dtype=wp.mat33, device=device
+            shape=(batch_size, n_particles), dtype=wp.mat33, device=device
         )
         self.mpm_state.particle_Jp = wp.zeros(
-            shape=n_particles, dtype=float, device=device
+            shape=(batch_size, n_particles), dtype=float, device=device
         )
 
         self.mpm_state.particle_selection = wp.zeros(
-            shape=n_particles, dtype=int, device=device
+            shape=(batch_size, n_particles), dtype=int, device=device
         )
 
         self.mpm_state.grid_m = wp.zeros(
-            shape=(self.mpm_model.n_grid, self.mpm_model.n_grid, self.mpm_model.n_grid),
+            shape=(batch_size, self.mpm_model.n_grid_x, self.mpm_model.n_grid_y, self.mpm_model.n_grid_z),
             dtype=float,
             device=device,
         )
         self.mpm_state.grid_v_in = wp.zeros(
-            shape=(self.mpm_model.n_grid, self.mpm_model.n_grid, self.mpm_model.n_grid),
+            shape=(batch_size, self.mpm_model.n_grid_x, self.mpm_model.n_grid_y, self.mpm_model.n_grid_z),
             dtype=wp.vec3,
             device=device,
         )
         self.mpm_state.grid_v_out = wp.zeros(
-            shape=(self.mpm_model.n_grid, self.mpm_model.n_grid, self.mpm_model.n_grid),
+            shape=(batch_size, self.mpm_model.n_grid_x, self.mpm_model.n_grid_y, self.mpm_model.n_grid_z),
             dtype=wp.vec3,
             device=device,
         )
@@ -133,17 +133,16 @@ class MPM_Simulator_WARP:
         self.collider_params = []
         self.modify_bc = []
 
-        self.tailored_struct_for_bc = MPMtailoredStruct()
+        # self.tailored_struct_for_bc = MPMtailoredStruct()
         self.pre_p2g_operations = []
         self.impulse_params = []
 
         self.particle_velocity_modifiers = []
         self.particle_velocity_modifier_params = []
 
+
     # the h5 file should store particle initial position and volume.
-    def load_from_sampling(
-        self, sampling_h5, n_grid=100, grid_lim=1.0, device="cuda:0"
-    ):
+    def load_from_sampling(self, sampling_h5, batch_size=2, dx=0.01, grid_lim=[1.0, 1.0, 1.0], device="cuda:0"):
         if not os.path.exists(sampling_h5):
             print("h5 file cannot be found at ", os.getcwd() + sampling_h5)
             exit()
@@ -155,21 +154,20 @@ class MPM_Simulator_WARP:
 
         self.dim, self.n_particles = x.shape[1], x.shape[0]
 
-        self.initialize(self.n_particles, n_grid, grid_lim, device=device)
+        self.initialize(self.n_particles, batch_size, dx, grid_lim, device=device)
 
-        print(
-            "Sampling particles are loaded from h5 file. Simulator is re-initialized for the correct n_particles"
-        )
+        print("Sampling particles are loaded from h5 file. Simulator is re-initialized for the correct n_particles")
         particle_volume = np.squeeze(particle_volume, 0)
 
-        self.mpm_state.particle_x = wp.from_numpy(
-            x, dtype=wp.vec3, device=device
-        )  # initialize warp array from np
+        x = np.array(x, dtype=float)[None].repeat(batch_size, axis=0)
+        particle_volume = np.array(particle_volume, dtype=float)[None].repeat(batch_size, axis=0)
+
+        self.mpm_state.particle_x = wp.from_numpy(x, dtype=wp.vec3, device=device)  # initialize warp array from np
 
         # initial velocity is default to zero
         wp.launch(
             kernel=set_vec3_to_zero,
-            dim=self.n_particles,
+            dim=(batch_size, self.n_particles),
             inputs=[self.mpm_state.particle_v],
             device=device,
         )
@@ -178,33 +176,29 @@ class MPM_Simulator_WARP:
         # initial deformation gradient is set to identity
         wp.launch(
             kernel=set_mat33_to_identity,
-            dim=self.n_particles,
+            dim=(batch_size, self.n_particles),
             inputs=[self.mpm_state.particle_F_trial],
             device=device,
         )
         # initial deformation gradient is set to identity
 
-        self.mpm_state.particle_vol = wp.from_numpy(
-            particle_volume, dtype=float, device=device
-        )
+        self.mpm_state.particle_vol = wp.from_numpy(particle_volume, dtype=float, device=device)
 
         print("Particles initialized from sampling file.")
         print("Total particles: ", self.n_particles)
 
-    # shape of tensor_x is (n, 3); shape of tensor_volume is (n,)
-    def load_initial_data_from_torch(
-        self,
-        tensor_x,
-        tensor_volume,
-        tensor_cov = None,
-        n_grid=100,
-        grid_lim=1.0,
-        device="cuda:0",
-    ):
-        self.dim, self.n_particles = tensor_x.shape[1], tensor_x.shape[0]
+
+    # shape of tensor_x is (bsz, n, 3); shape of tensor_volume is (bsz, n)
+    def load_initial_data_from_torch(self, tensor_x, tensor_volume, tensor_cov=None, batch_size=2, dx=0.01, grid_lim=[1.0, 1.0, 1.0], device="cuda:0"):
+        self.dim, self.n_particles = tensor_x.shape[2], tensor_x.shape[1]
         assert tensor_x.shape[0] == tensor_volume.shape[0]
+        assert tensor_x.shape[1] == tensor_volume.shape[1]
         # assert tensor_x.shape[0] == tensor_cov.reshape(-1, 6).shape[0]
-        self.initialize(self.n_particles, n_grid, grid_lim, device=device)
+
+        batch_size_x = tensor_x.shape[0]
+        assert batch_size_x == batch_size
+
+        self.initialize(self.n_particles, batch_size, dx, grid_lim, device=device)
 
         self.import_particle_x_from_torch(tensor_x, device)
         self.mpm_state.particle_vol = wp.from_numpy(
@@ -212,7 +206,7 @@ class MPM_Simulator_WARP:
         )
         if tensor_cov is not None:
             self.mpm_state.particle_init_cov = wp.from_numpy(
-                tensor_cov.reshape(-1).detach().clone().cpu().numpy(),
+                tensor_cov.reshape(batch_size, -1).detach().clone().cpu().numpy(),
                 dtype=float,
                 device=device,
             )
@@ -223,7 +217,7 @@ class MPM_Simulator_WARP:
         # initial velocity is default to zero
         wp.launch(
             kernel=set_vec3_to_zero,
-            dim=self.n_particles,
+            dim=(batch_size, self.n_particles),
             inputs=[self.mpm_state.particle_v],
             device=device,
         )
@@ -232,7 +226,7 @@ class MPM_Simulator_WARP:
         # initial deformation gradient is set to identity
         wp.launch(
             kernel=set_mat33_to_identity,
-            dim=self.n_particles,
+            dim=(batch_size, self.n_particles),
             inputs=[self.mpm_state.particle_F_trial],
             device=device,
         )
@@ -241,9 +235,11 @@ class MPM_Simulator_WARP:
         print("Particles initialized from torch data.")
         print("Total particles: ", self.n_particles)
 
+
     # must give density. mass will be updated as density * volume
     def set_parameters(self, device="cuda:0", **kwargs):
         self.set_parameters_dict(device, kwargs)
+
 
     def set_parameters_dict(self, kwargs={}, device="cuda:0"):
         if "material" in kwargs:
@@ -263,30 +259,30 @@ class MPM_Simulator_WARP:
                 raise TypeError("Undefined material type")
 
         if "grid_lim" in kwargs:
-            self.mpm_model.grid_lim = kwargs["grid_lim"]
-        if "n_grid" in kwargs:
-            self.mpm_model.n_grid = kwargs["n_grid"]
-        self.mpm_model.grid_dim_x = self.mpm_model.n_grid
-        self.mpm_model.grid_dim_y = self.mpm_model.n_grid
-        self.mpm_model.grid_dim_z = self.mpm_model.n_grid
-        (
-            self.mpm_model.dx,
-            self.mpm_model.inv_dx,
-        ) = self.mpm_model.grid_lim / self.mpm_model.n_grid, float(
-            self.mpm_model.n_grid / self.mpm_model.grid_lim
-        )
+            grid_lim = kwargs["grid_lim"]
+            self.mpm_model.grid_lim_x = grid_lim[0]
+            self.mpm_model.grid_lim_y = grid_lim[1]
+            self.mpm_model.grid_lim_z = grid_lim[2]
+        if "dx" in kwargs:
+            self.mpm_model.dx = kwargs["dx"]
+            self.mpm_model.inv_dx = float(1.0 / self.mpm_model.dx)
+
+        self.mpm_model.n_grid_x = int(self.mpm_model.grid_lim_x / self.mpm_model.dx)
+        self.mpm_model.n_grid_y = int(self.mpm_model.grid_lim_y / self.mpm_model.dx)
+        self.mpm_model.n_grid_z = int(self.mpm_model.grid_lim_z / self.mpm_model.dx)
+
         self.mpm_state.grid_m = wp.zeros(
-            shape=(self.mpm_model.n_grid, self.mpm_model.n_grid, self.mpm_model.n_grid),
+            shape=(self.mpm_model.batch_size, self.mpm_model.n_grid_x, self.mpm_model.n_grid_y, self.mpm_model.n_grid_z),
             dtype=float,
             device=device,
         )
         self.mpm_state.grid_v_in = wp.zeros(
-            shape=(self.mpm_model.n_grid, self.mpm_model.n_grid, self.mpm_model.n_grid),
+            shape=(self.mpm_model.batch_size, self.mpm_model.n_grid_x, self.mpm_model.n_grid_y, self.mpm_model.n_grid_z),
             dtype=wp.vec3,
             device=device,
         )
         self.mpm_state.grid_v_out = wp.zeros(
-            shape=(self.mpm_model.n_grid, self.mpm_model.n_grid, self.mpm_model.n_grid),
+            shape=(self.mpm_model.batch_size, self.mpm_model.n_grid_x, self.mpm_model.n_grid_y, self.mpm_model.n_grid_z),
             dtype=wp.vec3,
             device=device,
         )
@@ -294,14 +290,14 @@ class MPM_Simulator_WARP:
         if "E" in kwargs:
             wp.launch(
                 kernel=set_value_to_float_array,
-                dim=self.n_particles,
+                dim=(self.mpm_model.batch_size, self.n_particles),
                 inputs=[self.mpm_model.E, kwargs["E"]],
                 device=device,
             )
         if "nu" in kwargs:
             wp.launch(
                 kernel=set_value_to_float_array,
-                dim=self.n_particles,
+                dim=(self.mpm_model.batch_size, self.n_particles),
                 inputs=[self.mpm_model.nu, kwargs["nu"]],
                 device=device,
             )
@@ -309,7 +305,7 @@ class MPM_Simulator_WARP:
             val = kwargs["yield_stress"]
             wp.launch(
                 kernel=set_value_to_float_array,
-                dim=self.n_particles,
+                dim=(self.mpm_model.batch_size, self.n_particles),
                 inputs=[self.mpm_model.yield_stress, val],
                 device=device,
             )
@@ -329,13 +325,13 @@ class MPM_Simulator_WARP:
             density_value = kwargs["density"]
             wp.launch(
                 kernel=set_value_to_float_array,
-                dim=self.n_particles,
+                dim=(self.mpm_model.batch_size, self.n_particles),
                 inputs=[self.mpm_state.particle_density, density_value],
                 device=device,
             )
             wp.launch(
                 kernel=get_float_array_product,
-                dim=self.n_particles,
+                dim=(self.mpm_model.batch_size, self.n_particles),
                 inputs=[
                     self.mpm_state.particle_density,
                     self.mpm_state.particle_vol,
@@ -362,14 +358,14 @@ class MPM_Simulator_WARP:
                 param_modifier.nu = params["nu"]
                 wp.launch(
                     kernel=apply_additional_params,
-                    dim=self.n_particles,
+                    dim=(self.mpm_model.batch_size, self.n_particles),
                     inputs=[self.mpm_state, self.mpm_model, param_modifier],
                     device=device,
                 )
 
             wp.launch(
                 kernel=get_float_array_product,
-                dim=self.n_particles,
+                dim=(self.mpm_model.batch_size, self.n_particles),
                 inputs=[
                     self.mpm_state.particle_density,
                     self.mpm_state.particle_vol,
@@ -379,14 +375,20 @@ class MPM_Simulator_WARP:
             )
 
 
-    def finalize_mu_lam(self, device = "cuda:0"):
-        wp.launch(kernel = compute_mu_lam_from_E_nu, dim = self.n_particles, inputs = [self.mpm_state, self.mpm_model], device=device)
+    def finalize_mu_lam(self, device="cuda:0"):
+        wp.launch(
+            kernel=compute_mu_lam_from_E_nu, 
+            dim=(self.mpm_model.batch_size, self.n_particles), 
+            inputs=[self.mpm_state, self.mpm_model], 
+            device=device
+        )
 
     def p2g2p(self, step, dt, device="cuda:0"):
         grid_size = (
-            self.mpm_model.grid_dim_x,
-            self.mpm_model.grid_dim_y,
-            self.mpm_model.grid_dim_z,
+            self.mpm_model.batch_size,
+            self.mpm_model.n_grid_x,
+            self.mpm_model.n_grid_y,
+            self.mpm_model.n_grid_z,
         )
         wp.launch(
             kernel=zero_grid,
@@ -399,15 +401,15 @@ class MPM_Simulator_WARP:
         for k in range(len(self.pre_p2g_operations)):
             wp.launch(
                 kernel=self.pre_p2g_operations[k],
-                dim=self.n_particles,
+                dim=(self.mpm_model.batch_size, self.n_particles),
                 inputs=[self.time, dt, self.mpm_state, self.impulse_params[k]],
                 device=device,
             )
         # apply dirichlet particle v modifier
         for k in range(len(self.particle_velocity_modifiers)):
             wp.launch(
-                kernel = self.particle_velocity_modifiers[k],
-                dim = self.n_particles,
+                kernel=self.particle_velocity_modifiers[k],
+                dim=(self.mpm_model.batch_size, self.n_particles),
                 inputs=[self.time, self.mpm_state, self.particle_velocity_modifier_params[k]],
                 device=device,
             )
@@ -421,7 +423,7 @@ class MPM_Simulator_WARP:
         ):
             wp.launch(
                 kernel=compute_stress_from_F_trial,
-                dim=self.n_particles,
+                dim=(self.mpm_model.batch_size, self.n_particles),
                 inputs=[self.mpm_state, self.mpm_model, dt],
                 device=device,
             )  # F and stress are updated
@@ -435,7 +437,7 @@ class MPM_Simulator_WARP:
         ):
             wp.launch(
                 kernel=p2g_apic_with_stress,
-                dim=self.n_particles,
+                dim=(self.mpm_model.batch_size, self.n_particles),
                 inputs=[self.mpm_state, self.mpm_model, dt],
                 device=device,
             )  # apply p2g'
@@ -485,7 +487,7 @@ class MPM_Simulator_WARP:
         ):
             wp.launch(
                 kernel=g2p,
-                dim=self.n_particles,
+                dim=(self.mpm_model.batch_size, self.n_particles),
                 inputs=[self.mpm_state, self.mpm_model, dt],
                 device=device,
             )  # x, v, C, F_trial are updated
@@ -506,7 +508,7 @@ class MPM_Simulator_WARP:
         self.mpm_state.particle_density = torch2warp_float(all_particle_densities, dvc=device)
         wp.launch(
                 kernel=get_float_array_product,
-                dim=self.n_particles,
+                dim=(self.mpm_model.batch_size, self.n_particles),
                 inputs=[
                     self.mpm_state.particle_density,
                     self.mpm_state.particle_vol,
@@ -534,7 +536,7 @@ class MPM_Simulator_WARP:
         if tensor_F is not None:
             if clone:
                 tensor_F = tensor_F.clone().detach()
-            tensor_F = torch.reshape(tensor_F, (-1, 3, 3))  # arranged by rowmajor
+            tensor_F = torch.reshape(tensor_F, (self.mpm_model.batch_size, -1, 3, 3))  # arranged by rowmajor
             self.mpm_state.particle_F = torch2warp_mat33(tensor_F, dvc=device)
 
     # clone = True makes a copy, not necessarily needed
@@ -542,7 +544,7 @@ class MPM_Simulator_WARP:
         if tensor_C is not None:
             if clone:
                 tensor_C = tensor_C.clone().detach()
-            tensor_C = torch.reshape(tensor_C, (-1, 3, 3))  # arranged by rowmajor
+            tensor_C = torch.reshape(tensor_C, (self.mpm_model.batch_size, -1, 3, 3))  # arranged by rowmajor
             self.mpm_state.particle_C = torch2warp_mat33(tensor_C, dvc=device)
 
     def export_particle_x_to_torch(self):
@@ -553,7 +555,7 @@ class MPM_Simulator_WARP:
 
     def export_particle_F_to_torch(self):
         F_tensor = wp.to_torch(self.mpm_state.particle_F)
-        F_tensor = F_tensor.reshape(-1, 9)
+        F_tensor = F_tensor.reshape(self.mpm_model.batch_size, -1, 9)
         return F_tensor
 
     def export_particle_R_to_torch(self, device="cuda:0"):
@@ -565,18 +567,18 @@ class MPM_Simulator_WARP:
         ):
             wp.launch(
                 kernel=compute_R_from_F,
-                dim=self.n_particles,
+                dim=(self.mpm_model.batch_size, self.n_particles),
                 inputs=[self.mpm_state, self.mpm_model],
                 device=device,
             )
 
         R_tensor = wp.to_torch(self.mpm_state.particle_R)
-        R_tensor = R_tensor.reshape(-1, 9)
+        R_tensor = R_tensor.reshape(self.mpm_model.batch_size, -1, 9)
         return R_tensor
 
     def export_particle_C_to_torch(self):
         C_tensor = wp.to_torch(self.mpm_state.particle_C)
-        C_tensor = C_tensor.reshape(-1, 9)
+        C_tensor = C_tensor.reshape(self.mpm_model.batch_size, -1, 9)
         return C_tensor
 
     def export_particle_cov_to_torch(self, device="cuda:0"):
@@ -589,7 +591,7 @@ class MPM_Simulator_WARP:
             ):
                 wp.launch(
                     kernel=compute_cov_from_F,
-                    dim=self.n_particles,
+                    dim=(self.mpm_model.batch_size, self.n_particles),
                     inputs=[self.mpm_state, self.mpm_model],
                     device=device,
                 )
@@ -647,7 +649,7 @@ class MPM_Simulator_WARP:
             model: MPMModelStruct,
             param: Dirichlet_collider,
         ):
-            grid_x, grid_y, grid_z = wp.tid()
+            b, grid_x, grid_y, grid_z = wp.tid()
             if time >= param.start_time and time < param.end_time:
                 offset = wp.vec3(
                     float(grid_x) * model.dx - param.point[0],
@@ -659,7 +661,7 @@ class MPM_Simulator_WARP:
 
                 if dotproduct < 0.0:
                     if param.surface_type == 0:
-                        state.grid_v_out[grid_x, grid_y, grid_z] = wp.vec3(
+                        state.grid_v_out[b, grid_x, grid_y, grid_z] = wp.vec3(
                             0.0, 0.0, 0.0
                         )
                     elif param.surface_type == 11:
@@ -667,16 +669,16 @@ class MPM_Simulator_WARP:
                             float(grid_z) * model.dx < 0.4
                             or float(grid_z) * model.dx > 0.53
                         ):
-                            state.grid_v_out[grid_x, grid_y, grid_z] = wp.vec3(
+                            state.grid_v_out[b, grid_x, grid_y, grid_z] = wp.vec3(
                                 0.0, 0.0, 0.0
                             )
                         else:
-                            v_in = state.grid_v_out[grid_x, grid_y, grid_z]
-                            state.grid_v_out[grid_x, grid_y, grid_z] = (
+                            v_in = state.grid_v_out[b, grid_x, grid_y, grid_z]
+                            state.grid_v_out[b, grid_x, grid_y, grid_z] = (
                                 wp.vec3(v_in[0], 0.0, v_in[2]) * 0.3
                             )
                     else:
-                        v = state.grid_v_out[grid_x, grid_y, grid_z]
+                        v = state.grid_v_out[b, grid_x, grid_y, grid_z]
                         normal_component = wp.dot(v, n)
                         if param.surface_type == 1:
                             v = (
@@ -692,7 +694,7 @@ class MPM_Simulator_WARP:
                             ) * wp.normalize(
                                 v
                             )  # apply friction here
-                        state.grid_v_out[grid_x, grid_y, grid_z] = wp.vec3(
+                        state.grid_v_out[b, grid_x, grid_y, grid_z] = wp.vec3(
                             0.0, 0.0, 0.0
                         )
 
@@ -736,7 +738,7 @@ class MPM_Simulator_WARP:
             model: MPMModelStruct,
             param: Dirichlet_collider,
         ):
-            grid_x, grid_y, grid_z = wp.tid()
+            b, grid_x, grid_y, grid_z = wp.tid()
             if time >= param.start_time and time < param.end_time:
                 offset = wp.vec3(
                     float(grid_x) * model.dx - param.point[0],
@@ -748,10 +750,10 @@ class MPM_Simulator_WARP:
                     and wp.abs(offset[1]) < param.size[1]
                     and wp.abs(offset[2]) < param.size[2]
                 ):
-                    state.grid_v_out[grid_x, grid_y, grid_z] = param.velocity
+                    state.grid_v_out[b, grid_x, grid_y, grid_z] = param.velocity
             elif param.reset == 1:
                 if time < param.end_time + 15.0 * dt:
-                    state.grid_v_out[grid_x, grid_y, grid_z] = wp.vec3(0.0, 0.0, 0.0)
+                    state.grid_v_out[b, grid_x, grid_y, grid_z] = wp.vec3(0.0, 0.0, 0.0)
 
         def modify(time, dt, param: Dirichlet_collider):
             if time >= param.start_time and time < param.end_time:
@@ -779,54 +781,54 @@ class MPM_Simulator_WARP:
             model: MPMModelStruct,
             param: Dirichlet_collider,
         ):
-            grid_x, grid_y, grid_z = wp.tid()
+            b, grid_x, grid_y, grid_z = wp.tid()
             padding = 3
             if time >= param.start_time and time < param.end_time:
-                if grid_x < padding and state.grid_v_out[grid_x, grid_y, grid_z][0] < 0:
-                    state.grid_v_out[grid_x, grid_y, grid_z] = wp.vec3(
+                if grid_x < padding and state.grid_v_out[b, grid_x, grid_y, grid_z][0] < 0:
+                    state.grid_v_out[b, grid_x, grid_y, grid_z] = wp.vec3(
                         0.0,
-                        state.grid_v_out[grid_x, grid_y, grid_z][1],
-                        state.grid_v_out[grid_x, grid_y, grid_z][2],
+                        state.grid_v_out[b, grid_x, grid_y, grid_z][1],
+                        state.grid_v_out[b, grid_x, grid_y, grid_z][2],
                     )
                 if (
-                    grid_x >= model.grid_dim_x - padding
-                    and state.grid_v_out[grid_x, grid_y, grid_z][0] > 0
+                    grid_x >= model.n_grid_x - padding
+                    and state.grid_v_out[b, grid_x, grid_y, grid_z][0] > 0
                 ):
-                    state.grid_v_out[grid_x, grid_y, grid_z] = wp.vec3(
+                    state.grid_v_out[b, grid_x, grid_y, grid_z] = wp.vec3(
                         0.0,
-                        state.grid_v_out[grid_x, grid_y, grid_z][1],
-                        state.grid_v_out[grid_x, grid_y, grid_z][2],
+                        state.grid_v_out[b, grid_x, grid_y, grid_z][1],
+                        state.grid_v_out[b, grid_x, grid_y, grid_z][2],
                     )
 
-                if grid_y < padding and state.grid_v_out[grid_x, grid_y, grid_z][1] < 0:
-                    state.grid_v_out[grid_x, grid_y, grid_z] = wp.vec3(
-                        state.grid_v_out[grid_x, grid_y, grid_z][0],
+                if grid_y < padding and state.grid_v_out[b, grid_x, grid_y, grid_z][1] < 0:
+                    state.grid_v_out[b, grid_x, grid_y, grid_z] = wp.vec3(
+                        state.grid_v_out[b, grid_x, grid_y, grid_z][0],
                         0.0,
-                        state.grid_v_out[grid_x, grid_y, grid_z][2],
+                        state.grid_v_out[b, grid_x, grid_y, grid_z][2],
                     )
                 if (
-                    grid_y >= model.grid_dim_y - padding
-                    and state.grid_v_out[grid_x, grid_y, grid_z][1] > 0
+                    grid_y >= model.n_grid_y - padding
+                    and state.grid_v_out[b, grid_x, grid_y, grid_z][1] > 0
                 ):
-                    state.grid_v_out[grid_x, grid_y, grid_z] = wp.vec3(
-                        state.grid_v_out[grid_x, grid_y, grid_z][0],
+                    state.grid_v_out[b, grid_x, grid_y, grid_z] = wp.vec3(
+                        state.grid_v_out[b, grid_x, grid_y, grid_z][0],
                         0.0,
-                        state.grid_v_out[grid_x, grid_y, grid_z][2],
+                        state.grid_v_out[b, grid_x, grid_y, grid_z][2],
                     )
 
-                if grid_z < padding and state.grid_v_out[grid_x, grid_y, grid_z][2] < 0:
-                    state.grid_v_out[grid_x, grid_y, grid_z] = wp.vec3(
-                        state.grid_v_out[grid_x, grid_y, grid_z][0],
-                        state.grid_v_out[grid_x, grid_y, grid_z][1],
+                if grid_z < padding and state.grid_v_out[b, grid_x, grid_y, grid_z][2] < 0:
+                    state.grid_v_out[b, grid_x, grid_y, grid_z] = wp.vec3(
+                        state.grid_v_out[b, grid_x, grid_y, grid_z][0],
+                        state.grid_v_out[b, grid_x, grid_y, grid_z][1],
                         0.0,
                     )
                 if (
-                    grid_z >= model.grid_dim_z - padding
-                    and state.grid_v_out[grid_x, grid_y, grid_z][2] > 0
+                    grid_z >= model.n_grid_z - padding
+                    and state.grid_v_out[b, grid_x, grid_y, grid_z][2] > 0
                 ):
-                    state.grid_v_out[grid_x, grid_y, grid_z] = wp.vec3(
-                        state.grid_v_out[grid_x, grid_y, grid_z][0],
-                        state.grid_v_out[grid_x, grid_y, grid_z][1],
+                    state.grid_v_out[b, grid_x, grid_y, grid_z] = wp.vec3(
+                        state.grid_v_out[b, grid_x, grid_y, grid_z][0],
+                        state.grid_v_out[b, grid_x, grid_y, grid_z][1],
                         0.0,
                     )
 
@@ -844,7 +846,7 @@ class MPM_Simulator_WARP:
         impulse_param.point = wp.vec3(point[0], point[1], point[2])
         impulse_param.size = wp.vec3(size[0], size[1], size[2])
         impulse_param.mask = wp.zeros(
-            shape=self.n_particles, dtype=int, device=device)
+            shape=(self.mpm_model.batch_size, self.n_particles), dtype=int, device=device)
 
         impulse_param.force = wp.vec3(
             force[0],
@@ -853,14 +855,14 @@ class MPM_Simulator_WARP:
         )
 
         wp.launch(
-                kernel=selection_add_impulse_on_particles,
-                dim=self.n_particles,
-                inputs=[
-                    self.mpm_state,
-                    impulse_param
-                ],
-                device=device,
-            )
+            kernel=selection_add_impulse_on_particles,
+            dim=(self.mpm_model.batch_size, self.n_particles),
+            inputs=[
+                self.mpm_state,
+                impulse_param
+            ],
+            device=device,
+        )
 
         self.impulse_params.append(impulse_param)
 
@@ -868,15 +870,15 @@ class MPM_Simulator_WARP:
         def apply_force(
             time: float, dt: float, state: MPMStateStruct, param: Impulse_modifier
         ):
-            p = wp.tid()
+            b, p = wp.tid()
             if time >= param.start_time and time < param.end_time:
-                if param.mask[p] == 1:
+                if param.mask[b, p] == 1:
                     impulse = wp.vec3(
-                        param.force[0] / state.particle_mass[p],
-                        param.force[1] / state.particle_mass[p],
-                        param.force[2] / state.particle_mass[p],
+                        param.force[0] / state.particle_mass[b, p],
+                        param.force[1] / state.particle_mass[b, p],
+                        param.force[2] / state.particle_mass[b, p],
                     )
-                    state.particle_v[p] = state.particle_v[p] + impulse * dt
+                    state.particle_v[b, p] = state.particle_v[b, p] + impulse * dt
 
         self.pre_p2g_operations.append(apply_force)
 
@@ -897,11 +899,11 @@ class MPM_Simulator_WARP:
         velocity_modifier_params.end_time = end_time
 
         velocity_modifier_params.mask = wp.zeros(
-            shape=self.n_particles, dtype=int, device=device)
+            shape=(self.mpm_model.batch_size, self.n_particles), dtype=int, device=device)
         
         wp.launch(
                 kernel=selection_enforce_particle_velocity_translation,
-                dim=self.n_particles,
+                dim=(self.mpm_model.batch_size, self.n_particles),
                 inputs=[
                     self.mpm_state,
                     velocity_modifier_params
@@ -914,10 +916,10 @@ class MPM_Simulator_WARP:
         def modify_particle_v_before_p2g(time: float,
                                         state: MPMStateStruct,
                                         velocity_modifier_params: ParticleVelocityModifier):
-            p = wp.tid()
+            b, p = wp.tid()
             if time >= velocity_modifier_params.start_time and time < velocity_modifier_params.end_time:
-                if velocity_modifier_params.mask[p] == 1:
-                    state.particle_v[p] = velocity_modifier_params.velocity
+                if velocity_modifier_params.mask[b, p] == 1:
+                    state.particle_v[b, p] = velocity_modifier_params.velocity
 
         
         self.particle_velocity_modifiers.append(modify_particle_v_before_p2g)
@@ -955,11 +957,11 @@ class MPM_Simulator_WARP:
         velocity_modifier_params.end_time = end_time
 
         velocity_modifier_params.mask = wp.zeros(
-            shape=self.n_particles, dtype=int, device=device)
+            shape=(self.mpm_model.batch_size, self.n_particles), dtype=int, device=device)
         
         wp.launch(
                 kernel=selection_enforce_particle_velocity_cylinder,
-                dim=self.n_particles,
+                dim=(self.mpm_model.batch_size, self.n_particles),
                 inputs=[
                     self.mpm_state,
                     velocity_modifier_params
@@ -972,10 +974,10 @@ class MPM_Simulator_WARP:
         def modify_particle_v_before_p2g(time: float,
                                         state: MPMStateStruct,
                                         velocity_modifier_params: ParticleVelocityModifier):
-            p = wp.tid()
+            b, p = wp.tid()
             if time >= velocity_modifier_params.start_time and time < velocity_modifier_params.end_time:
-                if velocity_modifier_params.mask[p] == 1:
-                    offset = state.particle_x[p] - velocity_modifier_params.point
+                if velocity_modifier_params.mask[b, p] == 1:
+                    offset = state.particle_x[b, p] - velocity_modifier_params.point
                     horizontal_distance = wp.length(offset - wp.dot(offset, velocity_modifier_params.normal) * velocity_modifier_params.normal)
                     cosine = wp.dot(offset, velocity_modifier_params.horizontal_axis_1) / horizontal_distance
                     theta = wp.acos(cosine)
@@ -986,7 +988,7 @@ class MPM_Simulator_WARP:
                     axis1_scale = - horizontal_distance * wp.sin(theta) * velocity_modifier_params.rotation_scale
                     axis2_scale = horizontal_distance * wp.cos(theta) * velocity_modifier_params.rotation_scale
                     axis_vertical_scale = translation_scale
-                    state.particle_v[p] = axis1_scale * velocity_modifier_params.horizontal_axis_1 + axis2_scale * velocity_modifier_params.horizontal_axis_2 + axis_vertical_scale * velocity_modifier_params.normal 
+                    state.particle_v[b, p] = axis1_scale * velocity_modifier_params.horizontal_axis_1 + axis2_scale * velocity_modifier_params.horizontal_axis_2 + axis_vertical_scale * velocity_modifier_params.normal 
                         
 
         
