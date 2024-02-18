@@ -3,13 +3,15 @@ import warp as wp
 from mpm_solver_warp import MPM_Simulator_WARP
 from engine_utils import *
 import torch
+import time
+
 wp.init()
 wp.config.verify_cuda = True
 
 
 dvc = "cuda:0"
 
-batch_size = 2
+batch_size = 100
 
 mpm_solver = MPM_Simulator_WARP(n_particles=10, batch_size=batch_size)
 
@@ -44,18 +46,22 @@ directory_to_save = './sim_results'
 
 save_data_at_frame(mpm_solver, directory_to_save, 0, save_to_ply=True, save_to_h5=False)
 
-for k in range(1, 50):
+time1 = time.time()
+for k in range(1, 500):
     mpm_solver.p2g2p(k, 0.002, device=dvc)
-    save_data_at_frame(mpm_solver, directory_to_save, k, save_to_ply=True, save_to_h5=False)
+    # save_data_at_frame(mpm_solver, directory_to_save, k, save_to_ply=True, save_to_h5=False)
+time2 = time.time()
+print("Time for 500 iterations: ", time2-time1)
 
 
 # extract the position, make some changes, load it back
-position = mpm_solver.export_particle_x_to_torch()
 # e.g. we shift the x position
-position[:,0] = position[:,0] + 0.1
-mpm_solver.import_particle_x_from_torch(position)
+# position = mpm_solver.export_particle_x_to_torch()
+# position[..., 0] = position[..., 0] + 0.1
+# mpm_solver.import_particle_x_from_torch(position)
+
 # keep running sim
-for k in range(50, 1000):
- 
-    mpm_solver.p2g2p(k, 0.002, device=dvc)
-    save_data_at_frame(mpm_solver, directory_to_save, k, save_to_ply=True, save_to_h5=False)
+# for k in range(50, 1000):
+#  
+#     mpm_solver.p2g2p(k, 0.002, device=dvc)
+#     save_data_at_frame(mpm_solver, directory_to_save, k, save_to_ply=True, save_to_h5=False)
