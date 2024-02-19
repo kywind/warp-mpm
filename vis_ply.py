@@ -6,12 +6,14 @@ frames = 500
 vis = o3d.visualization.Visualizer()
 vis.create_window()
 
-pcd = o3d.io.read_point_cloud(f'sim_results/sim_0000000000.ply')
+vis_dir = 'sim_results_taichi'
+
+pcd = o3d.io.read_point_cloud(f'{vis_dir}/sim_0000000000.ply')
 vis.add_geometry(pcd)
 vis.poll_events()
 vis.update_renderer()
 for i in range(1, frames):
-    pcd.points = o3d.io.read_point_cloud(f'sim_results/sim_{i:010d}.ply').points
+    pcd.points = o3d.io.read_point_cloud(f'{vis_dir}/sim_{i:010d}.ply').points
     vis.update_geometry(pcd)
     vis.poll_events()
     vis.update_renderer()

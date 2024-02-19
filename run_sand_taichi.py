@@ -1,23 +1,21 @@
 
-import warp as wp
-from mpm_solver_warp import MPM_Simulator_WARP
-from engine_utils import *
+import taichi as ti
+from mpm_solver_taichi import MPM_Simulator_Taichi
+from engine_utils_taichi import *
 import torch
 import time
 
 t1 = time.time()
 
-wp.init()
-wp.config.verify_cuda = True
-
+ti.init(arch=ti.gpu)
 
 dvc = "cuda:0"
 
-batch_size = 1000
+batch_size = 500
 dx = 0.02
 
 # first initialization
-mpm_solver = MPM_Simulator_WARP(n_particles=10, batch_size=batch_size, dx=dx, device=dvc)
+mpm_solver = MPM_Simulator_Taichi(n_particles=10, batch_size=batch_size, dx=dx, device=dvc)
 
 # second initialization
 # You can either load sampling data from an external h5 file, containing initial position (n,3) and particle_volume (n,)
@@ -48,7 +46,7 @@ mpm_solver.finalize_mu_lam() # set mu and lambda from the E and nu input
 mpm_solver.add_surface_collider((0.0, 0.0, 0.13), (0.0,0.0,1.0), 'sticky', 0.0)
 
 
-directory_to_save = './sim_results'
+directory_to_save = './sim_results_taichi'
 
 save_data_at_frame(mpm_solver, directory_to_save, 0, save_to_ply=True, save_to_h5=False)
 
