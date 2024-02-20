@@ -339,6 +339,18 @@ def p2g_apic_with_stress(state: MPMStateStruct, model: MPMModelStruct, dt: float
         )
         # dw = wp.mat33(fx - wp.vec3(1.5), -2.0 * (fx - wp.vec3(1.0)), fx - wp.vec3(0.5))
 
+        C = state.particle_C[b, p]
+        # if model.rpic = 0, standard apic
+        # C = (1.0 - model.rpic_damping) * C + model.rpic_damping / 2.0 * (
+        #     C - wp.transpose(C)
+        # )
+        # if model.rpic_damping < -0.001:
+        #     # standard pic
+        #     C = wp.mat33(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+        # TODO MLS-MPM
+        affine = state.particle_mass[b, p] * C - \
+            dt * state.particle_vol[b, p] * 3.0 * model.inv_dx * model.inv_dx * stress
         for i in range(0, 3):
             for j in range(0, 3):
                 for k in range(0, 3):
@@ -350,14 +362,6 @@ def p2g_apic_with_stress(state: MPMStateStruct, model: MPMModelStruct, dt: float
                     iz = base_pos_z + k
                     weight = w[0, i] * w[1, j] * w[2, k]  # tricubic interpolation
                     # dweight = compute_dweight(model, w, dw, i, j, k)
-                    C = state.particle_C[b, p]
-                    # if model.rpic = 0, standard apic
-                    # C = (1.0 - model.rpic_damping) * C + model.rpic_damping / 2.0 * (
-                    #     C - wp.transpose(C)
-                    # )
-                    # if model.rpic_damping < -0.001:
-                    #     # standard pic
-                    #     C = wp.mat33(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
                     # elastic_force = -state.particle_vol[b, p] * stress * dweight
                     # v_in_add = (
@@ -367,8 +371,6 @@ def p2g_apic_with_stress(state: MPMStateStruct, model: MPMModelStruct, dt: float
                     #     + dt * elastic_force
                     # )
                     # TODO MLS-MPM
-                    affine = state.particle_mass[b, p] * C - \
-                        dt * state.particle_vol[b, p] * 3.0 * model.inv_dx * model.inv_dx * stress
                     v_in_add = weight * (state.particle_mass[b, p] * state.particle_v[b, p] + affine * dpos)
                     wp.atomic_add(state.grid_v_in, b, ix, iy, iz, v_in_add)
                     wp.atomic_add(
