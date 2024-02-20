@@ -6,7 +6,7 @@ frames = 500
 vis = o3d.visualization.Visualizer()
 vis.create_window()
 
-vis_dir = 'sim_results_taichi'
+vis_dir = 'sim_results_mls'
 
 pcd = o3d.io.read_point_cloud(f'{vis_dir}/sim_0000000000.ply')
 vis.add_geometry(pcd)
